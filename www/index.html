@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kanban Board</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    animation: {
+                        'fade-in': 'fadeIn 0.3s ease-out',
+                        'slide-up': 'slideUp 0.3s ease-out',
+                        'pulse-slow': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'drop-bounce': 'dropBounce 0.3s ease',
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        },
+                        slideUp: {
+                            '0%': { transform: 'translateY(10px)', opacity: '0' },
+                            '100%': { transform: 'translateY(0)', opacity: '1' },
+                        },
+                        dropBounce: {
+                            '0%': { transform: 'scale(1.08)' },
+                            '50%': { transform: 'scale(0.97)' },
+                            '100%': { transform: 'scale(1)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* ===== Theme Variables ===== */
+        :root {
+            --bg-body: #020617;
+            --bg-card: #1e293b;
+            --bg-column: rgba(15, 23, 42, 0.5);
+            --bg-input: #1e293b;
+            --bg-nav: rgba(30, 41, 59, 0.8);
+            --bg-hover: #334155;
+            --border-color: #334155;
+            --border-light: #1e293b;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --shadow: 0 10px 25px -5px rgba(0,0,0,0.3);
+        }
+        .light-mode {
+            --bg-body: #f1f5f9;
+            --bg-card: #ffffff;
+            --bg-column: rgba(241, 245, 249, 0.8);
+            --bg-input: #f8fafc;
+            --bg-nav: rgba(255, 255, 255, 0.85);
+            --bg-hover: #e2e8f0;
+            --border-color: #e2e8f0;
+            --border-light: #f1f5f9;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
+        }
+
+        /* Theme transitions */
+        body, nav, .task-card, .glass, input, select, textarea, .task-card, .bg-slate-900\\/50,
+        [class*="bg-slate"], [class*="border-slate"] {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-card); }
+        ::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+        /* Drag and drop styles */
+        .drag-over { background-color: rgba(59, 130, 246, 0.1); border: 2px dashed #3b82f6 !important; }
+        .drag-ghost {
+            position: fixed;
+            pointer-events: none;
+            z-index: 1000;
+            transform: rotate(3deg) scale(1.05);
+            opacity: 0.92;
+            box-shadow: 0 20px 40px -5px rgba(0,0,0,0.4);
+        }
+        .drag-placeholder {
+            border: 2px dashed rgba(59, 130, 246, 0.4);
+            background: rgba(59, 130, 246, 0.05);
+            border-radius: 0.5rem;
+            min-height: 60px;
+            margin-bottom: 0.75rem;
+            transition: all 0.15s ease;
+        }
+
+        /* Glassmorphism */
+        .glass { background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+
+        /* Card styles */
+        .task-card {
+            transition: all 0.2s ease;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .task-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
+        .task-card:active { cursor: grabbing; }
+
+        /* Empty column state */
+        .empty-column {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 2.5rem 1rem; text-align: center;
+        }
+        .empty-column-icon {
+            width: 48px; height: 48px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            margin-bottom: 0.75rem; background: #1e293b;
+        }
+
+        /* Column header sortable handle */
+        .column-header { cursor: grab; }
+        .column-header:active { cursor: grabbing; }
+        .col-drop-before { border-left: 3px solid #3b82f6 !important; }
+        .col-drop-after { border-right: 3px solid #3b82f6 !important; }
+
+        /* ===== Light Mode Overrides ===== */
+        .light-mode body,
+        body.light-mode { background-color: var(--bg-body) !important; color: var(--text-primary) !important; }
+
+        .light-mode .glass { background: var(--bg-nav) !important; border-color: var(--border-color) !important; }
+        .light-mode nav { border-color: var(--border-color) !important; }
+
+        .light-mode .bg-slate-950 { background-color: var(--bg-body) !important; }
+        .light-mode .bg-slate-900 { background-color: var(--bg-card) !important; }
+        .light-mode .bg-slate-900\/50 { background-color: var(--bg-column) !important; }
+        .light-mode .bg-slate-800 { background-color: var(--bg-hover) !important; }
+        .light-mode .hover\:bg-slate-800:hover { background-color: var(--bg-hover) !important; }
+
+        .light-mode .border-slate-700,
+        .light-mode .border-slate-800 { border-color: var(--border-color) !important; }
+
+        .light-mode .text-white { color: var(--text-primary) !important; }
+        .light-mode .text-gray-100,
+        .light-mode .text-gray-200 { color: var(--text-primary) !important; }
+        .light-mode .text-gray-300 { color: var(--text-secondary) !important; }
+        .light-mode .text-gray-400 { color: var(--text-secondary) !important; }
+        .light-mode .text-gray-500 { color: var(--text-muted) !important; }
+        .light-mode .placeholder-gray-500::placeholder { color: var(--text-muted) !important; }
+
+        .light-mode .task-card { background-color: var(--bg-card) !important; border-color: var(--border-color) !important; }
+        .light-mode .task-card:hover { box-shadow: var(--shadow) !important; }
+
+        .light-mode .empty-column-icon { background: var(--bg-hover) !important; }
+
+        .light-mode input,
+        .light-mode select,
+        .light-mode textarea { background-color: var(--bg-input) !important; border-color: var(--border-color) !important; color: var(--text-primary) !important; }
+        .light-mode input:focus,
+        .light-mode select:focus { border-color: var(--accent) !important; }
+
+        .light-mode .bg-slate-800.border-slate-700 { background-color: var(--bg-hover) !important; border-color: var(--border-color) !important; }
+
+        /* Sidebar & modals */
+        .light-mode .fixed.bg-slate-900,
+        .light-mode [class*="bg-slate-900"] { background-color: #ffffff !important; border-color: var(--border-color) !important; }
+        .light-mode .border-slate-700 { border-color: var(--border-color) !important; }
+        .light-mode .border-l.border-slate-700 { border-color: var(--border-color) !important; }
+
+        /* Quill editor in light mode */
+        .light-mode .ql-editor { background: var(--bg-input) !important; color: var(--text-primary) !important; }
+        .light-mode .ql-toolbar { background: var(--bg-input) !important; border-color: var(--border-color) !important; }
+        .light-mode .ql-snow .ql-stroke { stroke: var(--text-muted) !important; }
+        .light-mode .ql-snow .ql-fill { fill: var(--text-muted) !important; }
+
+        /* Board title in light mode */
+        .light-mode h1.text-white { color: var(--text-primary) !important; }
+        .light-mode p.text-gray-400 { color: var(--text-secondary) !important; }
+        .light-mode span.text-gray-400 { color: var(--text-secondary) !important; }
+    </style>
+    <!-- Quill Rich Text Editor -->
+    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+    <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+</head>
+<body class="bg-slate-950 text-gray-100 min-h-screen">
+    <!-- Navigation Header -->
+    <nav class="glass border-b border-slate-700 sticky top-0 z-50">
+        <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo -->
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                        </svg>
+                    </div>
+                    <span class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">KanbanFlow</span>
+                </div>
+
+                <!-- Search Bar -->
+                <div class="hidden md:flex flex-1 max-w-lg mx-8">
+                    <div class="relative w-full">
+                        <input type="text"
+                               id="searchInput"
+                               placeholder="Search tasks..."
+                               class="w-full bg-slate-800 border border-slate-700 rounded-full py-2 px-4 pl-10 text-sm text-gray-300 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">
+                        <svg class="w-5 h-5 text-gray-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex items-center gap-3">
+                    <button onclick="toggleTheme()" class="p-2 hover:bg-slate-800 rounded-lg transition-colors" title="Toggle theme" id="themeToggle">
+                        <svg id="themeIconMoon" class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                        <svg id="themeIconSun" class="w-5 h-5 text-yellow-400 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                    </button>
+                    <button onclick="openAddModal()"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all hover:scale-105 shadow-lg shadow-blue-600/20">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        <span class="hidden sm:inline">New Task</span>
+                    </button>
+                    <button class="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-blue-500 flex items-center justify-center text-white font-medium shadow-lg hover:scale-105 transition-transform">
+                        R
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Board Area -->
+    <main class="p-4 sm:p-6 lg:p-8">
+        <!-- Board Header -->
+        <div class="mb-6 flex items-center justify-between animate-fade-in">
+            <div>
+                <h1 class="text-2xl font-bold text-white cursor-pointer hover:text-blue-400 transition-colors" id="boardTitle" onclick="renameBoardTitle()">Project Board</h1>
+                <p class="text-gray-400 text-sm mt-1">Manage your tasks efficiently</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-gray-400" id="taskCount">0 tasks</span>
+                <button onclick="openBoardsSidebar()" class="p-2 hover:bg-slate-800 rounded-lg transition-colors" title="Boards">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                </button>
+                <button onclick="saveCurrentBoard()" class="p-2 hover:bg-slate-800 rounded-lg transition-colors" title="Save board">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+                </button>
+                <button onclick="newBoard()" class="p-2 hover:bg-slate-800 rounded-lg transition-colors" title="New board">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                </button>
+                <button onclick="refreshBoard()" class="p-2 hover:bg-slate-800 rounded-lg transition-colors" title="Refresh">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Kanban Columns — rendered dynamically -->
+        <div class="flex gap-6 overflow-x-auto pb-4 snap-x" id="boardContainer">
+            <!-- Columns are created by renderBoard() in app.js -->
+        </div>
+    </main>
+
+    <!-- Task Preview Modal -->
+    <div id="previewModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl transform transition-all animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div class="p-6">
+                <div id="previewContent">
+                    <!-- Populated dynamically by openPreviewModal() -->
+                </div>
+                <div class="flex gap-3 mt-6 pt-4 border-t border-slate-800">
+                    <button type="button" onclick="deleteFromPreview()"
+                            class="px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-900/20 transition-colors">
+                        Delete
+                    </button>
+                    <div class="flex-1"></div>
+                    <button type="button" onclick="closePreviewModal()"
+                            class="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-slate-800 transition-colors">
+                        Close
+                    </button>
+                    <button type="button" onclick="editFromPreview()"
+                            class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all hover:scale-105 shadow-lg shadow-blue-600/20 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                        Edit
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Task Modal -->
+    <div id="taskModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl transform transition-all animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 id="modalTitle" class="text-xl font-bold text-white">New Task</h2>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <form id="taskForm">
+                    <input type="hidden" id="taskId">
+                    <div class="space-y-4">
+                        <!-- Title -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">Title</label>
+                            <input type="text" id="taskTitle" required
+                                   class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                                   placeholder="Enter task title">
+                        </div>
+
+                        <!-- Description -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">Description</label>
+                            <div id="quill-editor" class="bg-slate-800 border border-slate-700 rounded-lg" style="min-height: 120px;"></div>
+                            <textarea style="display:none" id="taskDescription" rows="3"
+                                      class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all resize-none"
+                                      placeholder="Add a description..."></textarea>
+                        </div>
+
+                        <!-- Status, Priority & Due Date -->
+                        <div class="grid grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">Status</label>
+                                <select id="taskStatus"
+                                        class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">
+                                    <!-- Populated dynamically from columns -->
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">Priority</label>
+                                <select id="taskPriority"
+                                        class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">
+                                    <option value="low">Low</option>
+                                    <option value="medium" selected>Medium</option>
+                                    <option value="high">High</option>
+                                    <option value="urgent">Urgent</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">Due Date</label>
+                                <input type="datetime-local" id="taskDueDate"
+                                       class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">
+                            </div>
+                        </div>
+
+                        <!-- Tags -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">Tags</label>
+                            <div class="relative">
+                                <div id="tagDropdown" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white cursor-pointer flex items-center justify-between" onclick="toggleTagDropdown()">
+                                    <span id="tagDropdownLabel" class="text-gray-500">Select tags...</span>
+                                    <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                </div>
+                                <div id="tagDropdownMenu" class="hidden absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                                    <!-- Populated dynamically -->
+                                </div>
+                            </div>
+                            <input type="hidden" id="taskTags" value="">
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex gap-3 mt-6 pt-4 border-t border-slate-800">
+                        <button type="button" id="deleteBtn" onclick="deleteCurrentTask()"
+                                class="hidden px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-900/20 transition-colors">
+                            Delete
+                        </button>
+                        <div class="flex-1"></div>
+                        <button type="button" onclick="closeModal()"
+                                class="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-slate-800 transition-colors">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                                class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all hover:scale-105 shadow-lg shadow-blue-600/20">
+                            Save Task
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Column Management Modal -->
+    <div id="columnModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm shadow-2xl transform transition-all animate-slide-up">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 id="columnModalTitle" class="text-xl font-bold text-white">Add Column</h2>
+                    <button onclick="closeColumnModal()" class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Name</label>
+                        <input type="text" id="columnName" required
+                               class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                               placeholder="Column name">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Color</label>
+                        <div class="flex items-center gap-3">
+                            <input type="color" id="columnColor" value="#4361ee"
+                                   class="w-12 h-10 rounded-lg border border-slate-700 cursor-pointer bg-transparent">
+                            <div id="columnColorPreview" class="w-10 h-10 rounded-lg border border-slate-700" style="background: #4361ee;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex gap-3 mt-6 pt-4 border-t border-slate-800">
+                    <button type="button" id="deleteColumnBtn" onclick="deleteCurrentColumn()"
+                            class="hidden px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-900/20 transition-colors">
+                        Delete Column
+                    </button>
+                    <div class="flex-1"></div>
+                    <button type="button" onclick="closeColumnModal()"
+                            class="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-slate-800 transition-colors">
+                            Cancel
+                    </button>
+                    <button type="button" onclick="saveColumn()"
+                            class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all hover:scale-105 shadow-lg shadow-blue-600/20">
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Boards Sidebar -->
+    <div id="boardsOverlay" class="fixed inset-0 bg-black/50 z-40 hidden" onclick="closeBoardsSidebar()"></div>
+    <div id="boardsSidebar" class="fixed top-0 right-0 h-full w-96 bg-slate-900 border-l border-slate-700 z-50 transform translate-x-full transition-transform duration-300 overflow-y-auto">
+        <div class="p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold text-white">Boards</h2>
+                <button onclick="closeBoardsSidebar()" class="text-gray-400 hover:text-white"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+            </div>
+            <div id="boardsList" class="space-y-2 mb-6">
+                <!-- Boards rendered here -->
+            </div>
+            <div class="border-t border-slate-700 pt-4 space-y-2">
+                <button onclick="newBoard()" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium">New Board</button>
+                <button onclick="exportBoard()" class="w-full bg-slate-800 hover:bg-slate-700 text-gray-200 px-4 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    Export Board
+                </button>
+                <button onclick="triggerImport()" class="w-full bg-slate-800 hover:bg-slate-700 text-gray-200 px-4 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                    Import Board
+                </button>
+                <input type="file" id="importFileInput" accept=".json" class="hidden" onchange="importBoard(event)">
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-4 right-4 transform translate-y-20 opacity-0 transition-all duration-300 z-50">
+        <div class="bg-slate-800 border border-slate-700 text-white px-6 py-3 rounded-lg shadow-xl flex items-center gap-3">
+            <div id="toastIcon"></div>
+            <span id="toastMessage">Notification</span>
+        </div>
+    </div>
+
+    <script src="/api/kanban-api-client.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+<script>
+    let quillEditor = null;
+
+    function initQuillEditor() {
+        if (!quillEditor) {
+            quillEditor = new Quill('#quill-editor', {
+                theme: 'snow',
+                placeholder: 'Add a description...',
+                modules: {
+                    toolbar: [
+                        ['bold', 'italic', 'underline', 'strike'],
+                        ['blockquote', 'code-block'],
+                        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                        [{ 'color': [] }, { 'background': [] }],
+                        ['clean']
+                    ]
+                }
+            });
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        setTimeout(initQuillEditor, 500);
+    });
+</script>
+</html>
