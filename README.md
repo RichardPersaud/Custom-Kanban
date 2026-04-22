@@ -1,7 +1,7 @@
 # KanbanFlow
 
 A full-featured kanban board application with real-time collaboration, built with PHP, MariaDB, and vanilla JavaScript. Runs entirely in Docker.
-<img width="1080" height="720" alt="image" src="https://github.com/user-attachments/assets/b940cf81-ef89-4635-b416-f42bf7584f0b" />
+<img width="2497" height="1233" alt="image" src="https://github.com/user-attachments/assets/b3290ebf-94d1-497b-9ee2-fad8712e736e" />
 
 ## Features
 
