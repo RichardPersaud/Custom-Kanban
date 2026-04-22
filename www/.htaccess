@@ -1,0 +1,76 @@
+# KanbanFlow Apache2 Configuration
+# Place this file in your web root (e.g., public_html/)
+
+# Enable rewrite engine
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Handle board member routes FIRST (before general patterns)
+    RewriteRule ^api/boards/(\d+)/members$ api/board-members.php [L,QSA]
+    RewriteRule ^api/boards/(\d+)/members/(\d+)$ api/board-members.php [L,QSA]
+    RewriteRule ^api/boards/(\d+)/invite$ api/board-members.php [L,QSA]
+    RewriteRule ^api/boards/(\d+)/accept$ api/board-members.php [L,QSA]
+    RewriteRule ^api/boards/(\d+)/invitations/(\d+)$ api/board-members.php [L,QSA]
+    RewriteRule ^api/boards/(\d+)/invitation/(\d+)$ api/board-members.php [L,QSA]
+
+    # Handle task activities API
+    RewriteRule ^api/tasks/(\d+)/activities$ api/task-activities.php [L,QSA]
+
+    # Handle presence API routes
+    RewriteRule ^api/presence/heartbeat$ api/presence.php [L,QSA]
+    RewriteRule ^api/presence/board/(\d+)$ api/presence.php [L,QSA]
+
+    # Handle board events SSE
+    RewriteRule ^api/board-events/(\d+)$ api/board-events.php [L,QSA]
+
+    # Handle API routes with ID (e.g., /api/tasks/123 or /api/tasks/123/move)
+    # This must come AFTER specific patterns above
+    RewriteRule ^api/(\w+)/(\d+)(/.*)?$ api/$1.php [L,QSA]
+
+    # Handle API routes with /auth/action (e.g., /api/auth/login)
+    RewriteRule ^api/auth/(.+)$ api/auth.php [L,QSA]
+
+    # Handle API routes without ID but with action (e.g., /api/columns/move)
+    RewriteRule ^api/(\w+)/(.+)$ api/$1.php [L,QSA]
+
+    # Handle API routes without extension (e.g., /api/tasks or /api/boards.php)
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^api/(\w+)$ api/$1.php [L,QSA]
+</IfModule>
+
+# PHP settings (optional - adjust as needed)
+<IfModule mod_php.c>
+    php_flag display_errors off
+    php_value upload_max_filesize 10M
+    php_value post_max_size 10M
+</IfModule>
+
+# Enable CORS for API endpoints
+<IfModule mod_headers.c>
+    <FilesMatch "^api/">
+        Header always set Access-Control-Allow-Origin "*"
+        Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+    </FilesMatch>
+</IfModule>
+
+# Handle OPTIONS preflight requests
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^api/ - [R=200,L]
+
+# Allow access to log file (optional - for debugging)
+<Files "log.txt">
+    Require all denied
+</Files>
+
+# Deny access to .htaccess itself
+<Files ".htaccess">
+    Require all denied
+</Files>
+
+# Protect sensitive files
+<FilesMatch "\.(md|log|sql|ini)$">
+    Require all denied
+</FilesMatch>

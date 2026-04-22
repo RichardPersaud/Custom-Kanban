@@ -16,6 +16,15 @@ $method = $_SERVER['REQUEST_METHOD'];
 $segments = getPathSegments();
 $taskId = getPathId(2);
 
+// Require authentication only for write operations
+if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'])) {
+    requireRealAuth();
+}
+
+$method = $_SERVER['REQUEST_METHOD'];
+$segments = getPathSegments();
+$taskId = getPathId(2);
+
 // Check for action suffix (move, position)
 $action = null;
 if (count($segments) >= 4 && $taskId) {
@@ -37,29 +46,47 @@ try {
         $newStatus = (int)$input['status'];
         logDebug("Moving task $taskId to status $newStatus");
         
-        // Check if task exists
-        $checkStmt = $pdo->prepare("SELECT id FROM tasks WHERE id = ? AND (user_id = ? OR user_id IS NULL)");
-        $checkStmt->execute([$taskId, $userId]);
-        if (!$checkStmt->fetch()) {
+        // Check if task exists and user has access to its board
+        $stmt = $pdo->prepare("
+            SELECT t.id, t.board_id FROM tasks t
+            LEFT JOIN board_members bm ON t.board_id = bm.board_id AND bm.user_id = ?
+            WHERE t.id = ? AND (t.user_id = ? OR bm.user_id = ?)
+        ");
+        $stmt->execute([$userId, $taskId, $userId, $userId]);
+        if (!$stmt->fetch()) {
             jsonError('Task not found', 404);
         }
-        
+
+        // Get the board_id for the task
+        $stmt = $pdo->prepare("SELECT board_id FROM tasks WHERE id = ?");
+        $stmt->execute([$taskId]);
+        $taskInfo = $stmt->fetch();
+        $boardId = $taskInfo ? $taskInfo['board_id'] : null;
+
         // Update task status
         $stmt = $pdo->prepare("UPDATE tasks SET status = ? WHERE id = ?");
         $stmt->execute([$newStatus, $taskId]);
-        
+
         logDebug("Task $taskId moved to status $newStatus");
-        
+
+        // Broadcast the move event
+        if ($boardId) {
+            broadcastEvent($boardId, 'task_moved', [
+                'task_id' => $taskId,
+                'new_status' => $newStatus
+            ]);
+        }
+
         // Fetch updated task
         $stmt = $pdo->prepare("
-            SELECT t.*, c.name as status_name, c.color as status_color 
+            SELECT t.*, c.name as status_name, c.color as status_color
             FROM tasks t
             LEFT JOIN columns c ON t.status = c.id
             WHERE t.id = ?
         ");
         $stmt->execute([$taskId]);
         $task = $stmt->fetch();
-        
+
         jsonResponse(['success' => true, 'data' => $task]);
     }
     
@@ -77,13 +104,17 @@ try {
         $position = (int)$input['position'];
         logDebug("Updating task $taskId position to $position");
         
-        // Check if task exists
-        $checkStmt = $pdo->prepare("SELECT id FROM tasks WHERE id = ? AND (user_id = ? OR user_id IS NULL)");
-        $checkStmt->execute([$taskId, $userId]);
-        if (!$checkStmt->fetch()) {
+        // Check if task exists and user has access
+        $stmt = $pdo->prepare("
+            SELECT t.id, t.board_id FROM tasks t
+            LEFT JOIN board_members bm ON t.board_id = bm.board_id AND bm.user_id = ?
+            WHERE t.id = ? AND (t.user_id = ? OR bm.user_id = ?)
+        ");
+        $stmt->execute([$userId, $taskId, $userId, $userId]);
+        if (!$stmt->fetch()) {
             jsonError('Task not found', 404);
         }
-        
+
         // Update task position
         $stmt = $pdo->prepare("UPDATE tasks SET position = ? WHERE id = ?");
         $stmt->execute([$position, $taskId]);
@@ -100,23 +131,29 @@ try {
 
             if (isset($_GET['board_id'])) {
                 $boardId = (int)$_GET['board_id'];
+                // Only show tasks from boards user has access to
                 $stmt = $pdo->prepare("
                     SELECT t.*, c.name as status_name, c.color as status_color
                     FROM tasks t
                     LEFT JOIN columns c ON t.status = c.id
-                    WHERE t.board_id = ?
+                    JOIN boards b ON t.board_id = b.id
+                    LEFT JOIN board_members bm ON b.id = bm.board_id AND bm.user_id = ?
+                    WHERE t.board_id = ? AND (b.user_id = ? OR bm.user_id = ?)
                     ORDER BY t.position ASC, t.created_at DESC
                 ");
-                $stmt->execute([$boardId]);
+                $stmt->execute([$userId, $boardId, $userId, $userId]);
             } else {
+                // Show tasks from all boards user has access to
                 $stmt = $pdo->prepare("
                     SELECT t.*, c.name as status_name, c.color as status_color
                     FROM tasks t
                     LEFT JOIN columns c ON t.status = c.id
-                    WHERE t.user_id = ? OR t.user_id IS NULL
+                    JOIN boards b ON t.board_id = b.id
+                    LEFT JOIN board_members bm ON b.id = bm.board_id AND bm.user_id = ?
+                    WHERE (t.user_id = ? OR t.user_id IS NULL) AND (b.user_id = ? OR bm.user_id = ?)
                     ORDER BY t.position ASC, t.created_at DESC
                 ");
-                $stmt->execute([$userId]);
+                $stmt->execute([$userId, $userId, $userId, $userId]);
             }
             $tasks = $stmt->fetchAll();
             
@@ -165,20 +202,35 @@ try {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ");
             $stmt->execute([$title, $description, $status, $priority, $tags, $dueDate, $position, $boardId, $userId]);
-            
+
             $taskId = $pdo->lastInsertId();
             logDebug("Task created with ID: $taskId");
-            
+
+            // Log activity
+            $actStmt = $pdo->prepare("
+                INSERT INTO task_activities (task_id, user_id, action, created_at)
+                VALUES (?, ?, 'created', NOW())
+            ");
+            $actStmt->execute([$taskId, $userId]);
+
             // Fetch the created task
             $stmt = $pdo->prepare("
-                SELECT t.*, c.name as status_name, c.color as status_color 
+                SELECT t.*, c.name as status_name, c.color as status_color
                 FROM tasks t
                 LEFT JOIN columns c ON t.status = c.id
                 WHERE t.id = ?
             ");
             $stmt->execute([$taskId]);
             $task = $stmt->fetch();
-            
+
+            // Broadcast task creation
+            if ($boardId) {
+                broadcastEvent($boardId, 'task_created', [
+                    'task_id' => $taskId,
+                    'task' => $task
+                ]);
+            }
+
             jsonResponse(['success' => true, 'data' => $task], 201);
             break;
             
@@ -195,12 +247,26 @@ try {
             
             logDebug("Updating task $taskId with: " . json_encode($input));
             
-            // Check if task exists and belongs to user
-            $checkStmt = $pdo->prepare("SELECT id FROM tasks WHERE id = ? AND (user_id = ? OR user_id IS NULL)");
-            $checkStmt->execute([$taskId, $userId]);
-            if (!$checkStmt->fetch()) {
+            // Check if task exists and user has access to its board
+            $stmt = $pdo->prepare("
+                SELECT t.id, t.board_id, t.user_id, bm.role as board_role FROM tasks t
+                LEFT JOIN board_members bm ON t.board_id = bm.board_id AND bm.user_id = ?
+                LEFT JOIN boards b ON t.board_id = b.id
+                WHERE t.id = ? AND (t.user_id = ? OR b.user_id = ? OR bm.user_id = ?)
+            ");
+            $stmt->execute([$userId, $taskId, $userId, $userId, $userId]);
+            $taskInfo = $stmt->fetch();
+            if (!$taskInfo) {
                 jsonError('Task not found', 404);
             }
+
+            // Log the activity
+            $activityData = json_encode(['fields_updated' => array_keys($input)]);
+            $actStmt = $pdo->prepare("
+                INSERT INTO task_activities (task_id, user_id, action, created_at)
+                VALUES (?, ?, 'updated', NOW())
+            ");
+            $actStmt->execute([$taskId, $userId]);
             
             // Build dynamic update
             $fields = [];
@@ -250,17 +316,26 @@ try {
             $stmt->execute($values);
             
             logDebug("Task $taskId updated successfully");
-            
-            // Fetch updated task
+
+            // Fetch updated task with board_id
             $stmt = $pdo->prepare("
-                SELECT t.*, c.name as status_name, c.color as status_color 
+                SELECT t.*, c.name as status_name, c.color as status_color
                 FROM tasks t
                 LEFT JOIN columns c ON t.status = c.id
                 WHERE t.id = ?
             ");
             $stmt->execute([$taskId]);
             $task = $stmt->fetch();
-            
+
+            // Broadcast task update
+            if ($task && $task['board_id']) {
+                broadcastEvent($task['board_id'], 'task_updated', [
+                    'task_id' => $taskId,
+                    'task' => $task,
+                    'updated_fields' => array_keys($input)
+                ]);
+            }
+
             jsonResponse(['success' => true, 'data' => $task]);
             break;
             
@@ -268,19 +343,38 @@ try {
             if (!$taskId) {
                 jsonError('Task ID is required', 400);
             }
-            
+
             logDebug("Deleting task $taskId");
-            
-            // Check if task exists
-            $checkStmt = $pdo->prepare("SELECT id FROM tasks WHERE id = ? AND (user_id = ? OR user_id IS NULL)");
-            $checkStmt->execute([$taskId, $userId]);
-            if (!$checkStmt->fetch()) {
-                jsonError('Task not found', 404);
+
+            // Check if task exists and user can delete (task owner OR board admin/owner)
+            $stmt = $pdo->prepare("
+                SELECT t.id, t.user_id, t.board_id, bm.role as board_role FROM tasks t
+                LEFT JOIN board_members bm ON t.board_id = bm.board_id AND bm.user_id = ?
+                LEFT JOIN boards b ON t.board_id = b.id
+                WHERE t.id = ? AND (
+                    t.user_id = ? OR
+                    bm.role IN ('owner', 'admin') OR
+                    b.user_id = ?
+                )
+            ");
+            $stmt->execute([$userId, $taskId, $userId, $userId]);
+            $taskInfo = $stmt->fetch();
+            if (!$taskInfo) {
+                jsonError('Task not found or permission denied', 404);
             }
-            
+
+            $boardId = $taskInfo['board_id'];
+
             $stmt = $pdo->prepare("DELETE FROM tasks WHERE id = ?");
             $stmt->execute([$taskId]);
-            
+
+            // Broadcast task deletion
+            if ($boardId) {
+                broadcastEvent($boardId, 'task_deleted', [
+                    'task_id' => $taskId
+                ]);
+            }
+
             logDebug("Task $taskId deleted");
             jsonResponse(['success' => true, 'message' => 'Task deleted']);
             break;

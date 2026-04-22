@@ -40,10 +40,40 @@ services:
         restart: unless-stopped
         networks:
             - kanban-network
+        environment:
+            - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+            # SMTP Configuration for email notifications
+            - SMTP_HOST=${SMTP_HOST:-}
+            - SMTP_PORT=${SMTP_PORT:-587}
+            - SMTP_USER=${SMTP_USER:-}
+            - SMTP_PASS=${SMTP_PASS:-}
+            - SMTP_FROM=${SMTP_FROM:-}
+            - SMTP_FROM_NAME=${SMTP_FROM_NAME:-KanbanFlow}
         volumes:
             - type: bind
               source: /DATA/AppData/kanban-app/www
               target: /var/www/html
+              bind:
+                create_host_path: true
+        depends_on:
+            - db
+
+    websocket:
+        container_name: kanban-websocket
+        build: .
+        restart: unless-stopped
+        command: php /app/websocket-server.php
+        networks:
+            - kanban-network
+        volumes:
+            - type: bind
+              source: /DATA/AppData/kanban-app/www
+              target: /var/www/html
+              bind:
+                create_host_path: true
+            - type: bind
+              source: /DATA/AppData/kanban-app/websocket-server.php
+              target: /app/websocket-server.php
               bind:
                 create_host_path: true
         depends_on:

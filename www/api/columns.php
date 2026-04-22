@@ -11,6 +11,11 @@
 
 require_once __DIR__ . '/config.php';
 
+// Require authentication for all column operations
+if (!$userId) {
+    jsonError('Unauthorized', 401);
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 $segments = getPathSegments();
 
@@ -82,20 +87,35 @@ try {
         // Update the moved column
         $stmt = $pdo->prepare("UPDATE columns SET position = ? WHERE id = ?");
         $stmt->execute([$newPosition, $columnId]);
-        
+
         logDebug("Column $columnId moved from position $oldPosition to $newPosition");
-        
+
+        // Get board_id for broadcasting
+        $boardStmt = $pdo->prepare("SELECT board_id FROM columns WHERE id = ?");
+        $boardStmt->execute([$columnId]);
+        $boardData = $boardStmt->fetch();
+        $boardId = $boardData ? $boardData['board_id'] : null;
+
         // Return updated column
         $stmt = $pdo->prepare("
-            SELECT c.*, COUNT(t.id) as task_count 
-            FROM columns c 
+            SELECT c.*, COUNT(t.id) as task_count
+            FROM columns c
             LEFT JOIN tasks t ON c.id = t.status
             WHERE c.id = ?
             GROUP BY c.id
         ");
         $stmt->execute([$columnId]);
         $column = $stmt->fetch();
-        
+
+        // Broadcast column move to all connected clients on the board
+        if ($boardId) {
+            broadcastEvent($boardId, 'column_moved', [
+                'column_id' => $columnId,
+                'old_position' => $oldPosition,
+                'new_position' => $newPosition
+            ], $userId);
+        }
+
         jsonResponse(['success' => true, 'data' => $column]);
     }
     
@@ -178,7 +198,12 @@ try {
             $stmt = $pdo->prepare("SELECT * FROM columns WHERE id = ?");
             $stmt->execute([$columnId]);
             $column = $stmt->fetch();
-            
+
+            // Broadcast column creation
+            if ($boardId) {
+                broadcastEvent($boardId, 'column_created', ['column' => $column], $userId);
+            }
+
             jsonResponse(['success' => true, 'data' => $column], 201);
             break;
 
@@ -237,15 +262,20 @@ try {
             
             // Return updated column
             $stmt = $pdo->prepare("
-                SELECT c.*, COUNT(t.id) as task_count 
-                FROM columns c 
+                SELECT c.*, COUNT(t.id) as task_count
+                FROM columns c
                 LEFT JOIN tasks t ON c.id = t.status
                 WHERE c.id = ?
                 GROUP BY c.id
             ");
             $stmt->execute([$columnId]);
             $column = $stmt->fetch();
-            
+
+            // Broadcast column update
+            if ($column && $column['board_id']) {
+                broadcastEvent($column['board_id'], 'column_updated', ['column' => $column], $userId);
+            }
+
             jsonResponse(['success' => true, 'data' => $column]);
             break;
 
@@ -255,35 +285,43 @@ try {
             }
             
             logDebug("Deleting column $columnId");
-            
+
             // Check if column exists
-            $checkStmt = $pdo->prepare("SELECT id, position FROM columns WHERE id = ? AND (user_id = ? OR user_id IS NULL)");
+            $checkStmt = $pdo->prepare("SELECT id, position, board_id FROM columns WHERE id = ? AND (user_id = ? OR user_id IS NULL)");
             $checkStmt->execute([$columnId, $userId]);
             $column = $checkStmt->fetch();
-            
+
             if (!$column) {
                 jsonError('Column not found', 404);
             }
-            
+
+            $boardId = $column['board_id'];
+
             // Delete all tasks in this column first
             $deleteTasksStmt = $pdo->prepare("DELETE FROM tasks WHERE status = ?");
             $deleteTasksStmt->execute([$columnId]);
             $tasksDeleted = $deleteTasksStmt->rowCount();
             logDebug("Deleted $tasksDeleted tasks from column $columnId");
-            
+
             // Delete the column
             $stmt = $pdo->prepare("DELETE FROM columns WHERE id = ?");
             $stmt->execute([$columnId]);
-            
+
             // Reorder remaining columns
             $reorderStmt = $pdo->prepare("
-                UPDATE columns 
-                SET position = position - 1 
+                UPDATE columns
+                SET position = position - 1
                 WHERE user_id = ? AND position > ?
             ");
             $reorderStmt->execute([$userId, $column['position']]);
-            
+
             logDebug("Column $columnId deleted successfully");
+
+            // Broadcast column deletion
+            if ($boardId) {
+                broadcastEvent($boardId, 'column_deleted', ['column_id' => $columnId], $userId);
+            }
+
             jsonResponse(['success' => true, 'message' => 'Column and all associated tasks deleted']);
             break;
 

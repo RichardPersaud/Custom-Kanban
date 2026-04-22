@@ -88,13 +88,26 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Ensure user authentication (dev mode: auto-create session)
-if (!isset($_SESSION['user_id'])) {
+// Get user ID if authenticated - allow guest access
+$userId = $_SESSION['user_id'] ?? null;
+
+// If no session, auto-create guest session for reads
+if (!$userId) {
     $_SESSION['user_id'] = 1;
-    logDebug("Auto-created session for user_id=1 (dev mode)");
+    $_SESSION['guest_mode'] = true;
+    $userId = 1;
+    logDebug("Auto-created guest session (user_id=1)");
+} else {
+    logDebug("Authenticated as user_id=$userId");
 }
-$userId = $_SESSION['user_id'];
-logDebug("Authenticated as user_id=$userId");
+
+// Helper to check if write operations require real auth
+function requireRealAuth() {
+    if ($_SESSION['guest_mode'] ?? false) {
+        jsonError('Please log in to perform this action', 401);
+    }
+    return $_SESSION['user_id'];
+}
 
 /**
  * Send JSON response
@@ -131,6 +144,204 @@ function getJsonInput() {
         return null;
     }
     return $data ?: [];
+}
+
+/**
+ * Broadcast an event to all connected clients for a board
+ *
+ * @param int $boardId The board ID
+ * @param string $eventType Event type (e.g., 'task_created', 'task_updated')
+ * @param array $eventData Data associated with the event
+ * @param int|null $userId User who triggered the event (null for current user)
+ */
+function broadcastEvent($boardId, $eventType, $eventData, $userId = null) {
+    global $pdo;
+
+    if (!$userId) {
+        $userId = $_SESSION['user_id'] ?? null;
+    }
+
+    if (!$userId) {
+        logDebug("Cannot broadcast event: no user ID");
+        return false;
+    }
+
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO board_events (board_id, user_id, event_type, event_data, created_at)
+            VALUES (?, ?, ?, ?, NOW())
+        ");
+        $stmt->execute([$boardId, $userId, $eventType, json_encode($eventData)]);
+
+        // Clean up old events (keep last 1000 per board)
+        $pdo->exec("
+            DELETE FROM board_events
+            WHERE board_id = $boardId
+            AND id < (
+                SELECT id FROM (
+                    SELECT id FROM board_events
+                    WHERE board_id = $boardId
+                    ORDER BY id DESC
+                    LIMIT 1 OFFSET 1000
+                ) tmp
+            )
+        ");
+
+        // Also broadcast via WebSocket for real-time updates
+        $wsMessage = [
+            'type' => $eventType,
+            'data' => $eventData,
+            'user_id' => $userId
+        ];
+        broadcastToBoardWebSocket($boardId, $wsMessage);
+
+        return true;
+    } catch (PDOException $e) {
+        logError("Failed to broadcast event", ['error' => $e->getMessage()]);
+        return false;
+    }
+}
+
+/**
+ * Broadcast a message to all users on a board via WebSocket
+ * Connects to the WebSocket server and sends a broadcast message
+ *
+ * @param int $boardId Target board ID
+ * @param array $message Message to send
+ * @return bool Success status
+ */
+function broadcastToBoardWebSocket($boardId, $message) {
+    $wsHost = 'kanban-websocket';
+    $wsPort = 8080;
+    $secret = 'kanban_admin_secret';
+
+    $payload = json_encode([
+        'type' => 'admin_broadcast',
+        'secret' => $secret,
+        'target_type' => 'board',
+        'target_id' => $boardId,
+        'message' => $message
+    ]);
+
+    // Create socket connection
+    $socket = @fsockopen($wsHost, $wsPort, $errno, $errstr, 5);
+    if (!$socket) {
+        logDebug("Failed to connect to WebSocket server: $errstr ($errno)");
+        return false;
+    }
+
+    // WebSocket handshake
+    $key = base64_encode(openssl_random_pseudo_bytes(16));
+    $headers = "GET / HTTP/1.1\r\n";
+    $headers .= "Host: $wsHost:$wsPort\r\n";
+    $headers .= "Upgrade: websocket\r\n";
+    $headers .= "Connection: Upgrade\r\n";
+    $headers .= "Sec-WebSocket-Key: $key\r\n";
+    $headers .= "Sec-WebSocket-Version: 13\r\n";
+    $headers .= "\r\n";
+
+    fwrite($socket, $headers);
+
+    // Read handshake response
+    $response = '';
+    while (!feof($socket)) {
+        $line = fgets($socket, 1024);
+        $response .= $line;
+        if (trim($line) === '') break;
+    }
+
+    if (strpos($response, '101 Switching Protocols') === false) {
+        logDebug("WebSocket handshake failed: $response");
+        fclose($socket);
+        return false;
+    }
+
+    // Send the message frame
+    $length = strlen($payload);
+    if ($length <= 125) {
+        $frame = chr(0x81) . chr($length) . $payload;
+    } elseif ($length <= 65535) {
+        $frame = chr(0x81) . chr(126) . pack('n', $length) . $payload;
+    } else {
+        $frame = chr(0x81) . chr(127) . pack('NN', 0, $length) . $payload;
+    }
+
+    fwrite($socket, $frame);
+    fclose($socket);
+
+    logDebug("WebSocket broadcast sent to board $boardId");
+    return true;
+}
+
+/**
+ * Send a WebSocket notification to a specific user
+ * Connects to the WebSocket server and sends an admin_broadcast message
+ *
+ * @param int $userId Target user ID
+ * @param array $message Message to send
+ * @return bool Success status
+ */
+function notifyUserWebSocket($userId, $message) {
+    $wsHost = 'kanban-websocket';
+    $wsPort = 8080;
+    $secret = 'kanban_admin_secret';
+
+    $payload = json_encode([
+        'type' => 'admin_broadcast',
+        'secret' => $secret,
+        'target_type' => 'user',
+        'target_id' => $userId,
+        'message' => $message
+    ]);
+
+    // Create socket connection
+    $socket = @fsockopen($wsHost, $wsPort, $errno, $errstr, 5);
+    if (!$socket) {
+        logDebug("Failed to connect to WebSocket server: $errstr ($errno)");
+        return false;
+    }
+
+    // WebSocket handshake
+    $key = base64_encode(openssl_random_pseudo_bytes(16));
+    $headers = "GET / HTTP/1.1\r\n";
+    $headers .= "Host: $wsHost:$wsPort\r\n";
+    $headers .= "Upgrade: websocket\r\n";
+    $headers .= "Connection: Upgrade\r\n";
+    $headers .= "Sec-WebSocket-Key: $key\r\n";
+    $headers .= "Sec-WebSocket-Version: 13\r\n";
+    $headers .= "\r\n";
+
+    fwrite($socket, $headers);
+
+    // Read handshake response
+    $response = '';
+    while (!feof($socket)) {
+        $line = fgets($socket, 1024);
+        $response .= $line;
+        if (trim($line) === '') break;
+    }
+
+    if (strpos($response, '101 Switching Protocols') === false) {
+        logDebug("WebSocket handshake failed: $response");
+        fclose($socket);
+        return false;
+    }
+
+    // Send the message frame
+    $length = strlen($payload);
+    if ($length <= 125) {
+        $frame = chr(0x81) . chr($length) . $payload;
+    } elseif ($length <= 65535) {
+        $frame = chr(0x81) . chr(126) . pack('n', $length) . $payload;
+    } else {
+        $frame = chr(0x81) . chr(127) . pack('NN', 0, $length) . $payload;
+    }
+
+    fwrite($socket, $frame);
+    fclose($socket);
+
+    logDebug("WebSocket notification sent to user $userId");
+    return true;
 }
 
 /**
