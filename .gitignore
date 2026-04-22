@@ -22,3 +22,11 @@ www/EOF
 www/static/EOF
 docker-compose.yml.bak
 nginx.conf.docker
+
+# Environment and auth files
+.env
+.env.example
+www/api/auth.php
+www/api/auth/
+www/auth.html
+GOOGLE_OAUTH_SETUP.md
