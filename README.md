@@ -1,9 +1,10 @@
 # KanbanFlow
 
-A full-featured kanban board application built with PHP, MariaDB, and vanilla JavaScript. Runs entirely in Docker.
+A full-featured kanban board application with real-time collaboration, built with PHP, MariaDB, and vanilla JavaScript. Runs entirely in Docker.
 
 ## Features
 
+### Core Board Features
 - **Multi-Board Support** — Create, rename, switch between, and delete boards with strict data isolation
 - **Dynamic Columns** — Add, rename, recolor, delete, and drag-to-reorder columns
 - **Drag & Drop** — Drag task cards between columns or reorder within columns with instant optimistic UI updates
@@ -16,6 +17,23 @@ A full-featured kanban board application built with PHP, MariaDB, and vanilla Ja
 - **Duplicate Board Names** — Prevented at the API level
 - **Board Rename** — Click the board title to rename it
 
+### Real-Time Collaboration
+- **Live Collaboration** — Multiple users can work on the same board simultaneously via WebSocket
+- **Role-Based Permissions** — Owner, Admin, and Member roles with different access levels
+  - **Owner**: Full control (invite, remove, delete board, manage tasks)
+  - **Admin**: Can invite members, manage tasks, but cannot delete board
+  - **Member**: Can create and edit tasks, cannot manage members
+- **Email Invitations** — Invite users by email to collaborate on boards
+- **Real-Time Updates** — Task moves, edits, column reordering sync instantly across all connected users
+- **Presence Indicators** — See which users are viewing or editing specific tasks via avatar badges
+- **Activity Logging** — Track who created, updated, or moved tasks
+
+### UI/UX Enhancements
+- **Custom Modals** — Styled alert and confirm dialogs (no native browser dialogs)
+- **Ghost Drag Preview** — Visual feedback during drag operations
+- **Toast Notifications** — Success/error feedback for actions
+- **Responsive Design** — Works on desktop browsers
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -24,6 +42,7 @@ A full-featured kanban board application built with PHP, MariaDB, and vanilla Ja
 | Backend | PHP 8.2 FPM with PDO MySQL |
 | Database | MariaDB 10.11 |
 | Frontend | Vanilla JS, Tailwind CSS (CDN), Quill Editor |
+| Real-Time | Custom WebSocket Server (PHP sockets) |
 | Runtime | Docker Compose |
 
 ## Quick Start
@@ -80,24 +99,64 @@ A full-featured kanban board application built with PHP, MariaDB, and vanilla Ja
 | DELETE | `/api/tasks/{id}` | Delete a task |
 | POST | `/api/tasks/{id}/move` | Move task to a different column |
 | POST | `/api/tasks/{id}/position` | Update task position |
+| GET | `/api/tasks/{id}/activities` | Get activity log for a task |
+
+### Board Members (Collaboration)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/boards/{id}/members` | List all members and pending invitations |
+| POST | `/api/boards/{id}/invite` | Send invitation by email |
+| POST | `/api/boards/{id}/accept` | Accept invitation with token |
+| PUT | `/api/boards/{id}/members/{user_id}` | Update member role |
+| DELETE | `/api/boards/{id}/members/{user_id}` | Remove member |
+
+### Presence (Real-Time)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/presence/heartbeat` | Update user presence (board/task viewing) |
+| GET | `/api/presence/board/{id}` | Get active users on a board |
+
+## WebSocket Events
+
+The WebSocket server (`ws://localhost:3001/ws`) handles real-time communication:
+
+**Client → Server:**
+- `auth` — Authenticate with user_id
+- `join_board` — Subscribe to board updates
+- `task_create`, `task_update`, `task_delete`, `task_move` — Task changes
+- `column_create`, `column_update`, `column_delete`, `column_moved` — Column changes
+- `cursor_position` — Mouse position for live cursors
+
+**Server → Client:**
+- `user_joined`, `user_left` — Presence notifications
+- `task_created`, `task_updated`, `task_deleted`, `task_moved` — Task sync
+- `column_created`, `column_updated`, `column_deleted`, `column_moved` — Column sync
+- `cursor_update` — Live cursor positions (hidden when user is viewing a task)
 
 ## Project Structure
 
 ```
 .
-├── Dockerfile              # PHP 8.2 FPM with pdo_mysql
-├── docker-compose.yml      # Nginx + PHP + MariaDB
-├── nginx.conf              # FastCGI routing for API endpoints
+├── Dockerfile                  # PHP 8.2 FPM with pdo_mysql
+├── docker-compose.yml          # Nginx + PHP + MariaDB + WebSocket
+├── nginx.conf                  # FastCGI routing + WebSocket proxy
+├── websocket-server.php        # WebSocket server for real-time collaboration
 ├── www/
-│   ├── index.html          # Main app with theme CSS
+│   ├── index.html              # Main app with theme CSS
+│   ├── auth.html               # Login/registration page (not in repo)
 │   ├── static/
-│   │   └── app.js          # All frontend logic
+│   │   └── app.js              # All frontend logic
 │   └── api/
-│       ├── config.php      # Shared config, helpers, DB connection
-│       ├── db-migrate.php  # Database schema migration
-│       ├── boards.php      # Board CRUD API
-│       ├── columns.php     # Column CRUD + move API
-│       └── tasks.php       # Task CRUD + move/position API
+│       ├── config.php          # Shared config, helpers, DB connection
+│       ├── db-migrate.php      # Database schema migration
+│       ├── boards.php          # Board CRUD API
+│       ├── columns.php         # Column CRUD + move API
+│       ├── tasks.php           # Task CRUD + move/position API
+│       ├── board-members.php   # Member management & invitations
+│       ├── presence.php        # User presence tracking API
+│       └── task-activities.php # Activity logging API
 ```
 
 ## Configuration
@@ -110,6 +169,44 @@ ports:
 ```
 
 Database credentials are set via environment variables in `docker-compose.yml` under the `db` service.
+
+### Environment Variables (Optional)
+
+Create a `.env` file for optional features:
+
+```bash
+# Email (for invitations)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+
+# WebSocket
+WS_PORT=8080
+WS_SECRET=your-secret-key
+```
+
+## Recent Changes
+
+### v2.0 - Real-Time Collaboration
+- Added WebSocket server for live updates
+- Implemented role-based permissions (Owner/Admin/Member)
+- Added email invitations for board collaboration
+- Added presence indicators on task cards
+- Added activity logging for task changes
+- Added real-time column reordering sync
+- Replaced native alerts with custom styled modals
+- Fixed drag and drop ghost positioning issues
+- Added character limit (45) to task titles
+
+### v1.0 - Initial Release
+- Multi-board support with data isolation
+- Dynamic columns with drag-to-reorder
+- Drag & drop task cards
+- Rich text descriptions (Quill)
+- Tags and due dates
+- Dark/light mode
+- Board import/export
 
 ## License
 
