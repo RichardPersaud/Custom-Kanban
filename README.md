@@ -2,6 +2,8 @@
 
 A full-featured kanban board application with real-time collaboration, built with PHP, MariaDB, and vanilla JavaScript. Runs entirely in Docker.
 <img width="2497" height="1233" alt="image" src="https://github.com/user-attachments/assets/b3290ebf-94d1-497b-9ee2-fad8712e736e" />
+<img width="1300" height="862" alt="image" src="https://github.com/user-attachments/assets/5c4d90ec-531c-4101-9578-7038c76e0b6a" />
+
 
 ## Features
 
